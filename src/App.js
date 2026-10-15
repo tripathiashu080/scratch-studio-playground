@@ -20,9 +20,15 @@ function createSprite(index) {
 function updateTree(items, id, patch) {
   return items.map((item) => {
     if (item.id === id) return { ...item, ...patch };
-    return item.children
-      ? { ...item, children: updateTree(item.children, id, patch) }
-      : item;
+
+    if (item.children) {
+      return {
+        ...item,
+        children: updateTree(item.children, id, patch),
+      };
+    }
+
+    return item;
   });
 }
 
@@ -39,9 +45,11 @@ function removeTree(items, id) {
 function findBlock(items, id) {
   for (const item of items) {
     if (item.id === id) return item;
+
     const nested = item.children && findBlock(item.children, id);
     if (nested) return nested;
   }
+
   return null;
 }
 
@@ -59,63 +67,110 @@ function insertIntoParent(items, parentId, block) {
       };
     }
 
-    return item.children
-      ? {
-          ...item,
-          children: insertIntoParent(item.children, parentId, block),
-        }
-      : item;
+    if (item.children) {
+      return {
+        ...item,
+        children: insertIntoParent(item.children, parentId, block),
+      };
+    }
+
+    return item;
   });
 }
 
 function insertBefore(items, targetId, block) {
   const result = [];
+
   for (const item of items) {
     if (item.id === targetId) result.push(block);
+
     result.push(
       item.children
-        ? { ...item, children: insertBefore(item.children, targetId, block) }
+        ? {
+            ...item,
+            children: insertBefore(item.children, targetId, block),
+          }
         : item,
     );
   }
+
   return result;
 }
 
-function moveInTree(items, sourceId, targetId, targetParentId) {
+function insertAfter(items, targetId, block) {
+  const result = [];
+
+  for (const item of items) {
+    result.push(item);
+
+    if (item.id === targetId) {
+      result.push(block);
+    } else if (item.children) {
+      result[result.length - 1] = {
+        ...item,
+        children: insertAfter(item.children, targetId, block),
+      };
+    }
+  }
+
+  return result;
+}
+
+function moveInTree(
+  items,
+  sourceId,
+  targetId,
+  targetParentId,
+  position = "inside",
+) {
   const moving = findBlock(items, sourceId);
+
   if (!moving || moving.id === targetId) return items;
 
   const contains = (item, id) =>
     item.id === id ||
     (item.children || []).some((child) => contains(child, id));
 
+  // Prevent moving a block into itself or its descendants.
   if (targetParentId && contains(moving, targetParentId)) return items;
+  if (targetId && contains(moving, targetId)) return items;
 
   const withoutSource = removeTree(items, sourceId);
 
-  if (targetId) return insertBefore(withoutSource, targetId, moving);
+  if (targetId) {
+    return position === "after"
+      ? insertAfter(withoutSource, targetId, moving)
+      : insertBefore(withoutSource, targetId, moving);
+  }
+
   return insertIntoParent(withoutSource, targetParentId, moving);
 }
 
 function makeBlock(block) {
-  return {
+  const newBlock = {
     ...block,
-    id: `${block.type}-${Date.now()}-${Math.random()}`,
-    ...(block.type === "repeat" || block.type === "custom"
-      ? { children: [] }
-      : {}),
+    id: `${block.type}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   };
+
+  if (block.type === "repeat" || block.type === "custom") {
+    newBlock.children = [];
+  } else {
+    delete newBlock.children;
+  }
+
+  return newBlock;
 }
 
 export default function App() {
   const [sprites, setSprites] = useState([createSprite(1)]);
   const [selectedId, setSelectedId] = useState("sprite-1");
   const [isPlaying, setIsPlaying] = useState(false);
-  const running = useRef(false);
-  const selectedSprite =
-    sprites.find((sprite) => sprite.id === selectedId) || sprites[0];
   const [collisionMessage, setCollisionMessage] = useState("");
   const [customBlocks, setCustomBlocks] = useState([]);
+  const running = useRef(false);
+
+  const selectedSprite =
+    sprites.find((sprite) => sprite.id === selectedId) || sprites[0];
 
   const updateScript = (spriteId, updater) => {
     setSprites((current) =>
@@ -128,57 +183,71 @@ export default function App() {
   };
 
   const addBlock = (block, parentId = null) => {
-    if (!selectedSprite) return;
+    if (!selectedSprite || running.current) return;
+
     const newBlock = makeBlock(block);
 
     updateScript(selectedSprite.id, (current) =>
       insertIntoParent(current, parentId, newBlock),
     );
   };
+
   const addCustomBlock = (definition) => {
     setCustomBlocks((current) => [...current, definition]);
   };
+
   const updateBlock = (id, patch) => {
-    if (!selectedSprite) return;
+    if (!selectedSprite || running.current) return;
+
     updateScript(selectedSprite.id, (current) =>
       updateTree(current, id, patch),
     );
   };
 
   const removeBlock = (id) => {
-    if (!selectedSprite) return;
+    if (!selectedSprite || running.current) return;
+
     updateScript(selectedSprite.id, (current) => removeTree(current, id));
   };
 
-  const moveBlock = (sourceId, targetId, sourceParentId, targetParentId) => {
-    if (!selectedSprite) return;
+  const moveBlock = (
+    sourceId,
+    targetId,
+    sourceParentId,
+    targetParentId,
+    position = "inside",
+  ) => {
+    if (!selectedSprite || running.current) return;
+
     updateScript(selectedSprite.id, (current) =>
-      moveInTree(current, sourceId, targetId, targetParentId),
+      moveInTree(current, sourceId, targetId, targetParentId, position),
     );
   };
 
   const addSprite = () => {
-    if (sprites.length >= 8) return;
+    if (sprites.length >= 8 || running.current) return;
+
     const nextIndex = sprites.length + 1;
     const sprite = createSprite(nextIndex);
+
     setSprites((current) => [...current, sprite]);
     setSelectedId(sprite.id);
   };
 
   const updateSprite = (id, patchOrUpdater) => {
-    setSprites((current) =>
-      current.map((sprite) => {
-        if (sprite.id !== id) return sprite;
+  setSprites((current) =>
+    current.map((sprite) => {
+      if (sprite.id !== id) return sprite;
 
-        const patch =
-          typeof patchOrUpdater === "function"
-            ? patchOrUpdater(sprite)
-            : patchOrUpdater;
+      const patch =
+        typeof patchOrUpdater === "function"
+          ? patchOrUpdater(sprite)
+          : patchOrUpdater;
 
-        return { ...sprite, ...patch };
-      }),
-    );
-  };
+      return { ...sprite, ...patch };
+    })
+  );
+};
 
   const play = async () => {
     if (running.current) return;
@@ -191,9 +260,7 @@ export default function App() {
       await runWorld(
         sprites,
         (updatedSprites) => {
-          if (running.current) {
-            setSprites(updatedSprites);
-          }
+          if (running.current) setSprites(updatedSprites);
         },
         () => running.current,
         (firstId, secondId, updatedWorld) => {
@@ -232,6 +299,7 @@ export default function App() {
 
   const reset = () => {
     stop();
+
     setSprites((current) =>
       current.map((sprite) => ({
         ...sprite,
@@ -259,6 +327,7 @@ export default function App() {
           >
             + Add sprite
           </button>
+
           <button
             onClick={play}
             disabled={isPlaying}
@@ -266,12 +335,14 @@ export default function App() {
           >
             ▶ Play all
           </button>
+
           <button
             onClick={stop}
             className="rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white"
           >
             ■ Stop
           </button>
+
           <button
             onClick={reset}
             className="rounded-lg border bg-white px-4 py-2 text-sm"
@@ -280,16 +351,19 @@ export default function App() {
           </button>
         </div>
       </header>
+
       {collisionMessage && (
         <div className="mb-3 rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 text-sm font-medium text-purple-800">
           ⚡ {collisionMessage}
         </div>
       )}
+
       <div className="flex min-h-[calc(100vh-100px)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <Sidebar
           onAddBlock={addBlock}
           customBlocks={customBlocks}
           onMakeCustomBlock={addCustomBlock}
+          disabled={isPlaying}
         />
 
         <MidArea
@@ -298,16 +372,19 @@ export default function App() {
           onRemoveBlock={removeBlock}
           onMoveBlock={moveBlock}
           onUpdateBlock={updateBlock}
+          disabled={isPlaying}
         />
 
         <div className="flex w-1/3 min-w-[260px] flex-col border-l border-gray-200 bg-white">
           <div className="border-b p-3">
             <h2 className="mb-2 text-sm font-bold text-gray-700">Sprites</h2>
+
             <div className="flex flex-wrap gap-2">
               {sprites.map((sprite) => (
                 <button
                   key={sprite.id}
-                  onClick={() => setSelectedId(sprite.id)}
+                  onClick={() => !isPlaying && setSelectedId(sprite.id)}
+                  disabled={isPlaying}
                   className={`rounded-lg border px-3 py-2 text-sm ${
                     sprite.id === selectedId
                       ? "border-purple-500 bg-purple-50 font-semibold text-purple-700"
@@ -319,8 +396,9 @@ export default function App() {
               ))}
             </div>
           </div>
+
           <div className="min-h-0 flex-1">
-            <PreviewArea sprites={sprites} />
+            <PreviewArea sprites={sprites} onUpdateSprite={updateSprite} />
           </div>
         </div>
       </div>

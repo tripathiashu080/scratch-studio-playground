@@ -23,7 +23,9 @@ const categories = [
   {
     name: "Controls",
     color: "#FFAB19",
-    blocks: [{ type: "repeat", label: "Repeat", times: 3, children: [] }],
+    blocks: [
+      { type: "repeat", label: "Repeat", times: 3, children: [] },
+    ],
   },
 ];
 
@@ -31,6 +33,7 @@ export default function Sidebar({
   onAddBlock,
   customBlocks = [],
   onMakeCustomBlock,
+  disabled = false,
 }) {
   const [showModal, setShowModal] = useState(false);
 
@@ -44,8 +47,10 @@ export default function Sidebar({
 
   const renderBlock = (block, color) => (
     <button
-     key={block.id || block.customId || block.type}
-      draggable
+      key={block.id || block.customId || `${block.type}-${block.label}`}
+      type="button"
+      draggable={!disabled}
+      disabled={disabled}
       onClick={() => onAddBlock(createBlock(block))}
       onDragStart={(event) => {
         event.dataTransfer.setData(
@@ -55,7 +60,7 @@ export default function Sidebar({
         event.dataTransfer.effectAllowed = "copy";
       }}
       style={{ backgroundColor: color }}
-      className="mb-2 block w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-white shadow-sm"
+      className="mb-2 block w-full cursor-grab rounded-lg px-3 py-2 text-left text-sm font-medium text-white shadow-sm active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"
     >
       {block.label}
       {block.type === "move" && ` ${block.value} steps`}
@@ -85,12 +90,15 @@ export default function Sidebar({
         ))}
 
         <section className="mb-5">
-          <h3 className="mb-2 text-sm font-bold text-gray-500">My Blocks</h3>
+          <h3 className="mb-2 text-sm font-bold text-gray-500">
+            My Blocks
+          </h3>
 
           <button
             type="button"
+            disabled={disabled}
             onClick={() => setShowModal(true)}
-            className="mb-3 block w-full rounded-lg border border-pink-200 bg-pink-50 px-3 py-2 text-left text-sm font-semibold text-pink-700 hover:bg-pink-100"
+            className="mb-3 block w-full rounded-lg border border-pink-200 bg-pink-50 px-3 py-2 text-left text-sm font-semibold text-pink-700 hover:bg-pink-100 disabled:opacity-50"
           >
             + Make a Block
           </button>

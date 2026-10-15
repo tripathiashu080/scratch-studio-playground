@@ -1,4 +1,6 @@
-export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const sleep = (ms) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -48,16 +50,18 @@ function detectCollisions(world, collidingPairs, onCollision) {
         continue;
       }
 
-      if (collidingPairs.has(key)) {
-        continue;
-      }
+      if (collidingPairs.has(key)) continue;
 
       collidingPairs.add(key);
 
       const swapped = swapMovementPrograms(first, second);
 
       if (swapped) {
-        onCollision?.(first.id, second.id, JSON.parse(JSON.stringify(world)));
+        onCollision?.(
+          first.id,
+          second.id,
+          JSON.parse(JSON.stringify(world))
+        );
       }
     }
   }
@@ -67,22 +71,73 @@ export async function runWorld(
   initialSprites,
   publish,
   isRunning,
-  onCollision = () => {},
+  onCollision = () => {}
 ) {
   const world = JSON.parse(JSON.stringify(initialSprites));
   const collidingPairs = new Set();
 
   const refresh = () => {
-    if (!isRunning()) return;
-
-    publish(JSON.parse(JSON.stringify(world)));
+    if (isRunning()) {
+      publish(JSON.parse(JSON.stringify(world)));
+    }
   };
 
-  async function execute(sprite, blocks = []) {
-    console.log("Executing blocks:", blocks);
-    for (const block of blocks) {
-      console.log("Current block:", block.type, block);
+  // Smoothly animate a sprite to a target position.
+  async function animateMove(sprite, distance) {
+    const radians = (sprite.direction * Math.PI) / 180;
 
+    const startX = sprite.x;
+    const startY = sprite.y;
+
+    const targetX = startX + Math.cos(radians) * distance;
+    const targetY = startY + Math.sin(radians) * distance;
+
+    // Speed in pixels per second. Reduce this value for slower movement.
+    const pixelsPerSecond = 45;
+
+    const duration = Math.max(
+      500,
+      (Math.abs(distance) / pixelsPerSecond) * 1000
+    );
+
+    const startTime = Date.now();
+
+    while (isRunning()) {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Cubic ease-in/ease-out.
+      const easedProgress =
+        progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      sprite.x = startX + (targetX - startX) * easedProgress;
+      sprite.y = startY + (targetY - startY) * easedProgress;
+
+      refresh();
+
+      detectCollisions(world, collidingPairs, onCollision);
+
+      refresh();
+
+      if (progress >= 1) break;
+
+      await sleep(16);
+    }
+
+    if (!isRunning()) return;
+
+    sprite.x = targetX;
+    sprite.y = targetY;
+
+    refresh();
+    detectCollisions(world, collidingPairs, onCollision);
+    refresh();
+  }
+
+  async function execute(sprite, blocks = []) {
+    for (const block of blocks) {
       if (!isRunning()) return;
 
       if (block.type === "repeat") {
@@ -106,16 +161,12 @@ export async function runWorld(
 
       if (block.type === "move") {
         const distance = (Number(block.value) || 0) * 3;
-        const radians = (sprite.direction * Math.PI) / 180;
 
-        sprite.x += Math.cos(radians) * distance;
-        sprite.y += Math.sin(radians) * distance;
+        await animateMove(sprite, distance);
 
-        refresh();
-        detectCollisions(world, collidingPairs, onCollision);
-        refresh();
+        if (!isRunning()) return;
 
-        await sleep(300);
+        continue;
       }
 
       if (block.type === "turn") {
@@ -147,7 +198,9 @@ export async function runWorld(
 
         refresh();
 
-        await sleep(clamp(Number(block.seconds) || 0, 0, 30) * 1000);
+        await sleep(
+          clamp(Number(block.seconds) || 0, 0, 30) * 1000
+        );
 
         if (!isRunning()) return;
 
@@ -160,7 +213,7 @@ export async function runWorld(
 
   try {
     await Promise.all(
-      world.map((sprite) => execute(sprite, sprite.blocks || [])),
+      world.map((sprite) => execute(sprite, sprite.blocks || []))
     );
   } finally {
     refresh();

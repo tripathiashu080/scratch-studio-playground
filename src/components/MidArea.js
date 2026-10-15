@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useState } from "react";
 
 const colors = {
   move: "#4C97FF",
@@ -16,9 +16,12 @@ function Field({ value, onChange, type = "number", width = "64px" }) {
     <input
       type={type}
       value={value ?? ""}
+      disabled={false}
       onChange={(event) =>
         onChange(
-          type === "number" ? Number(event.target.value) : event.target.value
+          type === "number"
+            ? Number(event.target.value)
+            : event.target.value
         )
       }
       onClick={(event) => event.stopPropagation()}
@@ -101,7 +104,7 @@ function BlockLabel({ block, onUpdate }) {
       return <span>{block.label || "Custom Block"}</span>;
 
     default:
-      return block.type;
+      return <span>{block.type}</span>;
   }
 }
 
@@ -111,7 +114,10 @@ export default function MidArea({
   onRemoveBlock,
   onMoveBlock,
   onUpdateBlock,
+  disabled = false,
 }) {
+  const [dropTarget, setDropTarget] = useState(null);
+
   const readBlock = (event) => {
     const data = event.dataTransfer.getData("application/scratch-block");
     if (!data) return null;
@@ -123,17 +129,11 @@ export default function MidArea({
     }
   };
 
-  const makeBlock = (block) => ({
-    ...block,
-    id: `${block.type}-${Date.now()}-${Math.random()}`,
-    ...(block.type === "repeat" || block.type === "custom"
-      ? { children: [] }
-      : {}),
-  });
-
   const handleDrop = (event, targetId = null, parentId = null) => {
     event.preventDefault();
     event.stopPropagation();
+
+    if (disabled) return;
 
     const moving = event.dataTransfer.getData("application/scratch-reorder");
 
@@ -146,16 +146,27 @@ export default function MidArea({
             source.id,
             targetId,
             source.parentId,
-            parentId
+            parentId,
+            dropTarget?.id === targetId
+              ? dropTarget.position
+              : "inside"
           );
         }
-      } catch {
+      } catch (error) {
+        console.error("Unable to move block:", error);
       }
+
+      setDropTarget(null);
       return;
     }
 
     const template = readBlock(event);
-    if (template) onAddBlock(makeBlock(template), parentId);
+
+    if (template) {
+      onAddBlock(template, parentId);
+    }
+
+    setDropTarget(null);
   };
 
   const renderBlocks = (items, parentId = null) =>
@@ -163,22 +174,69 @@ export default function MidArea({
       const isContainer =
         block.type === "repeat" || block.type === "custom";
 
+      const currentDropPosition =
+        dropTarget?.id === block.id ? dropTarget.position : null;
+
       return (
         <div
           key={block.id}
-          draggable
+          draggable={!disabled}
           onDragStart={(event) => {
+            event.stopPropagation();
+
             event.dataTransfer.setData(
               "application/scratch-reorder",
               JSON.stringify({ id: block.id, parentId })
             );
+
             event.dataTransfer.effectAllowed = "move";
           }}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => handleDrop(event, block.id, parentId)}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (disabled) return;
+
+            const rect = event.currentTarget.getBoundingClientRect();
+            const relativeY = event.clientY - rect.top;
+
+            // The middle region of a container is reserved for nesting.
+            const position =
+              isContainer &&
+              relativeY > rect.height * 0.25 &&
+              relativeY < rect.height * 0.75
+                ? "inside"
+                : relativeY < rect.height / 2
+                  ? "before"
+                  : "after";
+
+            setDropTarget({ id: block.id, position });
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              setDropTarget((current) =>
+                current?.id === block.id ? null : current
+              );
+            }
+          }}
+          onDrop={(event) => {
+            const moving = event.dataTransfer.getData(
+              "application/scratch-reorder"
+            );
+
+            if (moving && currentDropPosition === "inside" && isContainer) {
+              handleDrop(event, null, block.id);
+            } else {
+              handleDrop(event, block.id, parentId);
+            }
+          }}
           style={{ backgroundColor: colors[block.type] || "#64748b" }}
-          className="mb-2 max-w-xl rounded-lg p-3 text-sm font-semibold text-white shadow-sm"
+          className="relative mb-2 max-w-xl rounded-lg p-3 text-sm font-semibold text-white shadow-sm"
         >
+          {currentDropPosition === "before" && (
+            <div className="absolute -top-1 left-0 right-0 z-10 h-1 rounded bg-green-400" />
+          )}
+
           <div className="flex items-center justify-between gap-3">
             <BlockLabel
               block={block}
@@ -188,11 +246,12 @@ export default function MidArea({
             <button
               type="button"
               draggable={false}
+              disabled={disabled}
               onClick={(event) => {
                 event.stopPropagation();
                 onRemoveBlock(block.id);
               }}
-              className="rounded px-2 py-1 hover:bg-black/10"
+              className="rounded px-2 py-1 hover:bg-black/10 disabled:opacity-50"
               aria-label="Remove block"
             >
               ×
@@ -201,18 +260,35 @@ export default function MidArea({
 
           {isContainer && (
             <div
-              onDragOver={(event) => event.preventDefault()}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (!disabled) {
+                  setDropTarget({ id: block.id, position: "inside" });
+                }
+              }}
               onDrop={(event) => handleDrop(event, null, block.id)}
-              className="mt-3 min-h-14 rounded-lg border-2 border-dashed border-white/70 bg-black/10 p-3"
+              className={`mt-3 min-h-14 rounded-lg border-2 border-dashed p-3 ${
+                dropTarget?.id === block.id &&
+                dropTarget.position === "inside"
+                  ? "border-green-300 bg-green-400/20"
+                  : "border-white/70 bg-black/10"
+              }`}
             >
               {block.children?.length ? (
                 renderBlocks(block.children, block.id)
               ) : (
                 <p className="text-xs font-normal text-white/80">
-                  Drop blocks inside this {block.type === "repeat" ? "repeat" : "custom block"}
+                  Drop blocks inside this{" "}
+                  {block.type === "repeat" ? "repeat" : "custom block"}
                 </p>
               )}
             </div>
+          )}
+
+          {currentDropPosition === "after" && (
+            <div className="absolute -bottom-1 left-0 right-0 z-10 h-1 rounded bg-green-400" />
           )}
         </div>
       );
@@ -223,14 +299,19 @@ export default function MidArea({
       <div className="mb-4">
         <h2 className="text-lg font-bold text-gray-800">Code workspace</h2>
         <p className="text-sm text-gray-500">
-          Edit block values or drag blocks into the workspace and Repeat or
-          Custom Block containers.
+          Drag blocks to arrange your script. Drop blocks inside Repeat or
+          Custom Block containers to nest them.
         </p>
       </div>
 
       <div
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => handleDrop(event)}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!disabled) setDropTarget(null);
+        }}
+        onDrop={(event) => {
+          handleDrop(event);
+        }}
         className="min-h-[65vh] rounded-xl border-2 border-dashed border-gray-300 bg-white p-4"
       >
         {blocks.length ? (
